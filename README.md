@@ -48,7 +48,7 @@ This fork keeps the original `Aranet4` platform alias and adds explicit multi-de
 npm install -g git+https://github.com/leoshimo/homebridge-aranet4.git
 ```
 
-The repository includes a `prepare` script so installs from GitHub build the TypeScript source before Homebridge loads the plugin.
+The repository includes the compiled `dist/` output so installs from GitHub can be loaded directly by Homebridge.
 
 ### Device Enrollment
 
