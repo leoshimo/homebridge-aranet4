@@ -1,129 +1,296 @@
-import { Service, PlatformAccessory } from 'homebridge';
+import { PlatformAccessory, Service, WithUUID } from 'homebridge';
 
-import { Aranet4Platform } from './platform';
 import { Aranet4Device, AranetData } from './aranet';
+import { Aranet4Platform } from './platform';
 
-/**
- * Platform Accessory
- * An instance of this class is created for each accessory your platform registers
- * Each accessory may expose multiple services of different service types.
- */
+type ServiceWithConfiguredName = Service & {
+  testCharacteristic?: (characteristic: unknown) => boolean;
+};
+type ServiceType = WithUUID<typeof Service>;
+
 export class Aranet4Accessory {
-  // https://developers.homebridge.io/#/service/HumiditySensor
-  private humidityService: Service;
-  // https://developers.homebridge.io/#/service/TemperatureSensor
-  private temperatureService: Service;
-  // https://developers.homebridge.io/#/service/CarbonDioxideSensor
-  private co2Service: Service;
-
+  private readonly humidityService: Service;
+  private readonly temperatureService: Service;
+  private readonly co2Service: Service;
+  private readonly co2PpmService?: Service;
+  private readonly airQualityService?: Service;
   private readonly services: Service[];
+  private readonly name: string;
+  private readonly serviceNames: {
+    humidity: string;
+    temperature: string;
+    co2: string;
+    co2Ppm: string;
+    airQuality: string;
+  };
+
+  private refreshTimer?: NodeJS.Timeout;
 
   constructor(
     private readonly platform: Aranet4Platform,
     private readonly accessory: PlatformAccessory,
     private readonly device: Aranet4Device,
   ) {
+    this.name = device.info.name || this.accessory.context?.device?.name || 'Aranet4';
+    this.serviceNames = {
+      humidity: `${this.name} Humidity`,
+      temperature: `${this.name} Temperature`,
+      co2: `${this.name} CO2 Alert`,
+      co2Ppm: `${this.name} CO2 ppm`,
+      airQuality: `${this.name} Air Quality`,
+    };
 
-    // set accessory information
     this.accessory.getService(this.platform.Service.AccessoryInformation)!
       .setCharacteristic(this.platform.Characteristic.Manufacturer, device.info.manufacturer)
       .setCharacteristic(this.platform.Characteristic.Model, device.info.modelNumber)
+      .setCharacteristic(this.platform.Characteristic.Name, this.name)
       .setCharacteristic(this.platform.Characteristic.SerialNumber, device.info.serialNumber)
       .setCharacteristic(this.platform.Characteristic.FirmwareRevision, device.info.firmwareRevision);
 
-    this.humidityService = this.accessory.getService(this.platform.Service.HumiditySensor) ||
-      this.accessory.addService(this.platform.Service.HumiditySensor);
+    this.humidityService = this.getOrAddPrimaryService(
+      this.platform.Service.HumiditySensor,
+      this.serviceNames.humidity,
+    );
+    this.temperatureService = this.getOrAddPrimaryService(
+      this.platform.Service.TemperatureSensor,
+      this.serviceNames.temperature,
+    );
+    this.co2Service = this.getOrAddPrimaryService(
+      this.platform.Service.CarbonDioxideSensor,
+      this.serviceNames.co2,
+    );
 
-    this.temperatureService = this.accessory.getService(this.platform.Service.TemperatureSensor) ||
-      this.accessory.addService(this.platform.Service.TemperatureSensor);
+    this.co2PpmService = this.platform.config.showCo2PpmTile
+      ? this.getOrAddService(this.platform.Service.LightSensor, this.serviceNames.co2Ppm, 'co2-ppm')
+      : undefined;
+    if (!this.co2PpmService) {
+      this.removeOptionalService(this.platform.Service.LightSensor, this.serviceNames.co2Ppm, 'co2-ppm');
+    }
 
-    this.co2Service = this.accessory.getService(this.platform.Service.CarbonDioxideSensor) ||
-      this.accessory.addService(this.platform.Service.CarbonDioxideSensor);
+    this.airQualityService = this.platform.config.showAirQualitySensor
+      ? this.getOrAddService(this.platform.Service.AirQualitySensor, this.serviceNames.airQuality, 'air-quality')
+      : undefined;
+    if (!this.airQualityService) {
+      this.removeOptionalService(this.platform.Service.AirQualitySensor, this.serviceNames.airQuality, 'air-quality');
+    }
+
+    this.setServiceName(this.humidityService, this.serviceNames.humidity);
+    this.humidityService.setCharacteristic(this.platform.Characteristic.StatusActive, true);
+    this.setServiceName(this.temperatureService, this.serviceNames.temperature);
+    this.temperatureService.setCharacteristic(this.platform.Characteristic.StatusActive, true);
+    this.setServiceName(this.co2Service, this.serviceNames.co2);
+    this.co2Service.setCharacteristic(this.platform.Characteristic.StatusActive, true);
+
+    if (this.co2PpmService) {
+      this.setServiceName(this.co2PpmService, this.serviceNames.co2Ppm);
+      this.co2PpmService.setCharacteristic(this.platform.Characteristic.StatusActive, true);
+    }
+
+    if (this.airQualityService) {
+      this.setServiceName(this.airQualityService, this.serviceNames.airQuality);
+      this.airQualityService.setCharacteristic(this.platform.Characteristic.StatusActive, true);
+    }
 
     this.services = [
       this.humidityService,
       this.temperatureService,
       this.co2Service,
-    ];
+      this.co2PpmService,
+      this.airQualityService,
+    ].filter((service): service is Service => Boolean(service));
 
-    // set the service name, this is what is displayed as the default name on the Home app
-    // in this example we are using the name we stored in the `accessory.context` in the `discoverDevices` method.
-    // this.service.setCharacteristic(this.platform.Characteristic.Name, accessory.context.device.exampleDisplayName);
+    this.setInitialValues();
+    this.startRefreshLoop();
+  }
 
-    // each service must implement at-minimum the "required characteristics" for the given service type
-    // see https://developers.homebridge.io/#/service/Lightbulb
+  private getOrAddPrimaryService(ServiceType: ServiceType, name: string): Service {
+    const service = this.accessory.getService(ServiceType) ||
+      this.accessory.getService(name) ||
+      this.accessory.addService(ServiceType, name, name);
 
+    this.removeDuplicatePrimaryServices(ServiceType, service);
+    this.removeUnsupportedConfiguredName(service);
 
-    /**
-     * Creating multiple services of the same type.
-     *
-     * To avoid "Cannot add a Service with the same UUID another Service without also defining a unique 'subtype' property." error,
-     * when creating multiple services of the same type, you need to use the following syntax to specify a name and subtype id:
-     * this.accessory.getService('NAME') || this.accessory.addService(this.platform.Service.Lightbulb, 'NAME', 'USER_DEFINED_SUBTYPE_ID');
-     *
-     * The USER_DEFINED_SUBTYPE must be unique to the platform accessory (if you platform exposes multiple accessories, each accessory
-     * can use the same sub type id.)
-     */
+    return service;
+  }
 
-    // Example: add two "motion sensor" services to the accessory
-    // const motionSensorOneService = this.accessory.getService('Motion Sensor One Name') ||
-    //   this.accessory.addService(this.platform.Service.MotionSensor, 'Motion Sensor One Name', 'YourUniqueIdentifier-1');
+  private setServiceName(service: Service, name: string) {
+    service.displayName = name;
+    service.setCharacteristic(this.platform.Characteristic.Name, name);
+  }
 
-    // const motionSensorTwoService = this.accessory.getService('Motion Sensor Two Name') ||
-    //   this.accessory.addService(this.platform.Service.MotionSensor, 'Motion Sensor Two Name', 'YourUniqueIdentifier-2');
+  private getOrAddService(ServiceType: ServiceType, name: string, subtype: string): Service {
+    if (typeof this.accessory.getServiceById === 'function') {
+      const existingById = this.accessory.getServiceById(ServiceType, subtype);
+      if (existingById) {
+        return existingById;
+      }
+    }
 
-    /**
-     * Updating characteristics values asynchronously.
-     *
-     * Example showing how to update the state of a Characteristic asynchronously instead
-     * of using the `on('get')` handlers.
-     * Here we change update the motion sensor trigger states on and off every 10 seconds
-     * the `updateCharacteristic` method.
-     *
-     */
+    return this.accessory.getService(name) || this.accessory.addService(ServiceType, name, subtype);
+  }
 
-    setInterval(async () => {
-      await this.updateSensorData();
-    }, this.platform.config.sensorDataRefreshInterval * 1000);
+  private removeOptionalService(ServiceType: ServiceType, name: string, subtype: string) {
+    const services = new Set<Service>();
+
+    if (typeof this.accessory.getServiceById === 'function') {
+      const byId = this.accessory.getServiceById(ServiceType, subtype);
+      if (byId) {
+        services.add(byId);
+      }
+    }
+
+    const byName = this.accessory.getService(name);
+    if (byName && byName.UUID === ServiceType.UUID) {
+      services.add(byName);
+    }
+
+    for (const service of services) {
+      this.platform.log.warn(`Removing disabled cached Aranet4 service: ${name}`);
+      this.accessory.removeService(service);
+    }
+  }
+
+  private removeDuplicatePrimaryServices(ServiceType: ServiceType, serviceToKeep: Service) {
+    const duplicateServices = this.accessory.services.filter((service) => {
+      return service.UUID === ServiceType.UUID && service !== serviceToKeep;
+    });
+
+    for (const duplicateService of duplicateServices) {
+      this.platform.log.warn(
+        `Removing duplicate cached Aranet4 service: ${duplicateService.displayName || ServiceType.name}`,
+      );
+      this.accessory.removeService(duplicateService);
+    }
+  }
+
+  private removeUnsupportedConfiguredName(service: Service) {
+    const serviceWithConfiguredName = service as ServiceWithConfiguredName;
+    const ConfiguredName = this.platform.Characteristic.ConfiguredName;
+
+    if (
+      typeof serviceWithConfiguredName.testCharacteristic === 'function' &&
+      serviceWithConfiguredName.testCharacteristic(ConfiguredName)
+    ) {
+      service.removeCharacteristic(service.getCharacteristic(ConfiguredName));
+    }
+  }
+
+  private setInitialValues() {
+    this.humidityService
+      .getCharacteristic(this.platform.Characteristic.CurrentRelativeHumidity)
+      .updateValue(0);
+    this.temperatureService
+      .getCharacteristic(this.platform.Characteristic.CurrentTemperature)
+      .updateValue(0);
+    this.co2Service
+      .getCharacteristic(this.platform.Characteristic.CarbonDioxideDetected)
+      .updateValue(this.platform.Characteristic.CarbonDioxideDetected.CO2_LEVELS_NORMAL);
+    this.co2Service
+      .getCharacteristic(this.platform.Characteristic.CarbonDioxideLevel)
+      .updateValue(0);
+    this.co2Service
+      .getCharacteristic(this.platform.Characteristic.CarbonDioxidePeakLevel)
+      .updateValue(0);
+
+    if (this.co2PpmService) {
+      this.co2PpmService
+        .getCharacteristic(this.platform.Characteristic.CurrentAmbientLightLevel)
+        .updateValue(0.0001);
+    }
+
+    if (this.airQualityService) {
+      this.airQualityService
+        .getCharacteristic(this.platform.Characteristic.AirQuality)
+        .updateValue(this.platform.Characteristic.AirQuality.UNKNOWN);
+    }
+
+    for (const service of this.services) {
+      service
+        .getCharacteristic(this.platform.Characteristic.StatusLowBattery)
+        .updateValue(this.platform.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL);
+    }
+  }
+
+  private startRefreshLoop() {
+    void this.updateSensorData();
+
+    const intervalSeconds = Math.max(30, Number(this.platform.config.sensorDataRefreshInterval) || 300);
+    this.refreshTimer = setInterval(() => {
+      void this.updateSensorData();
+    }, intervalSeconds * 1000);
   }
 
   async updateSensorData() {
+    let data: AranetData;
     try {
-      let data: AranetData;
-      try {
-        data = await this.device.getSensorData(this.platform.config.bluetoothReadyTimeout);
-      } catch (err) {
-        this.platform.log.error('could not get sensor data ' + err);
-        return;
-      }
-
-      let batteryLevel = this.platform.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL;
-      if (data.battery <= this.platform.config.batteryAlertThreshold) {
-        batteryLevel = this.platform.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW;
-      }
-      this.services.forEach(s => {
-        s.updateCharacteristic(
-          this.platform.Characteristic.StatusLowBattery,
-          batteryLevel,
-        );
-      });
-
-      // push the new value to HomeKit
-      this.humidityService.updateCharacteristic(this.platform.Characteristic.CurrentRelativeHumidity, data.humidity);
-
-      this.temperatureService.updateCharacteristic(this.platform.Characteristic.CurrentTemperature, data.temperature);
-
-      let co2level = this.platform.Characteristic.CarbonDioxideDetected.CO2_LEVELS_NORMAL;
-      if (data.co2 >= this.platform.config.co2AlertThreshold) {
-        co2level = this.platform.Characteristic.CarbonDioxideDetected.CO2_LEVELS_ABNORMAL;
-      }
-
-      this.co2Service.updateCharacteristic(this.platform.Characteristic.CarbonDioxideDetected, co2level);
-      this.co2Service.updateCharacteristic(this.platform.Characteristic.CarbonDioxideLevel, data.co2);
-
-      this.platform.log.debug('Updated data:', data);
+      data = await this.device.getSensorData(this.platform.config.bluetoothReadyTimeout);
     } catch (err) {
-      this.platform.log.error('could not update sensor data: ', err);
+      this.platform.log.error(`Could not get Aranet4 sensor data: ${err}`);
+      return;
     }
+
+    const batteryLevel = data.battery <= this.platform.config.batteryAlertThreshold
+      ? this.platform.Characteristic.StatusLowBattery.BATTERY_LEVEL_LOW
+      : this.platform.Characteristic.StatusLowBattery.BATTERY_LEVEL_NORMAL;
+
+    for (const service of this.services) {
+      service.updateCharacteristic(this.platform.Characteristic.StatusLowBattery, batteryLevel);
+    }
+
+    this.humidityService.updateCharacteristic(
+      this.platform.Characteristic.CurrentRelativeHumidity,
+      data.humidity,
+    );
+    this.temperatureService.updateCharacteristic(
+      this.platform.Characteristic.CurrentTemperature,
+      data.temperature,
+    );
+
+    const detected = data.co2 >= this.platform.config.co2AlertThreshold
+      ? this.platform.Characteristic.CarbonDioxideDetected.CO2_LEVELS_ABNORMAL
+      : this.platform.Characteristic.CarbonDioxideDetected.CO2_LEVELS_NORMAL;
+
+    this.co2Service.updateCharacteristic(this.platform.Characteristic.CarbonDioxideDetected, detected);
+    this.co2Service.updateCharacteristic(this.platform.Characteristic.CarbonDioxideLevel, data.co2);
+    this.co2Service.updateCharacteristic(this.platform.Characteristic.CarbonDioxidePeakLevel, data.co2);
+
+    if (this.co2PpmService) {
+      this.co2PpmService.updateCharacteristic(
+        this.platform.Characteristic.CurrentAmbientLightLevel,
+        Math.max(0.0001, data.co2),
+      );
+    }
+
+    if (this.airQualityService) {
+      this.airQualityService.updateCharacteristic(
+        this.platform.Characteristic.AirQuality,
+        this.getAirQuality(data.co2),
+      );
+    }
+
+    this.platform.log.info(
+      `Updated ${this.name}: CO2 ${data.co2} ppm, temperature ${data.temperature} C, ` +
+      `humidity ${data.humidity}%, battery ${data.battery}%`,
+    );
+    this.platform.log.debug('Updated Aranet4 raw data:', data);
+  }
+
+  private getAirQuality(co2: number): number {
+    const AirQuality = this.platform.Characteristic.AirQuality;
+
+    if (co2 <= 800) {
+      return AirQuality.EXCELLENT;
+    }
+    if (co2 <= 1000) {
+      return AirQuality.GOOD;
+    }
+    if (co2 <= 1400) {
+      return AirQuality.FAIR;
+    }
+    if (co2 <= 2000) {
+      return AirQuality.INFERIOR;
+    }
+    return AirQuality.POOR;
   }
 }

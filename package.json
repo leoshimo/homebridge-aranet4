@@ -1,32 +1,38 @@
 {
   "displayName": "Aranet4",
   "name": "homebridge-aranet4",
-  "version": "0.0.3",
-  "description": "An Homebridge plugin to get data from an Aranet4.",
+  "version": "0.1.0",
+  "description": "Homebridge plugin for Aranet4 CO2 sensors with explicit multi-device enrollment.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git://github.com/quentinms/homebridge-aranet4.git"
+    "url": "git+https://github.com/leoshimo/homebridge-aranet4.git"
   },
   "bugs": {
-    "url": "https://github.com/quentinms/homebridge-aranet4/issues"
+    "url": "https://github.com/leoshimo/homebridge-aranet4/issues"
   },
+  "homepage": "https://github.com/leoshimo/homebridge-aranet4#readme",
   "engines": {
-    "node": "^18.17.0 || ^20.9.0",
-    "homebridge": "^1.6.0"
+    "node": ">=18.17.0",
+    "homebridge": ">=1.6.0 || >=2.0.0"
   },
   "main": "dist/index.js",
   "scripts": {
     "lint": "eslint src/**.ts --max-warnings=0",
     "watch": "npm run build && npm link && nodemon",
     "build": "rimraf ./dist && tsc",
+    "prepare": "npm run build",
     "prepublishOnly": "npm run lint && npm run build"
   },
   "keywords": [
-    "homebridge-plugin"
+    "homebridge-plugin",
+    "aranet4",
+    "co2",
+    "bluetooth",
+    "homekit"
   ],
   "dependencies": {
-    "@abandonware/noble": "^1.9.2-23"
+    "@abandonware/noble": "^1.9.2-26"
   },
   "devDependencies": {
     "@types/node": "^18.16.20",

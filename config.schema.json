@@ -9,20 +9,54 @@
         "title": "Name",
         "type": "string",
         "required": true,
-        "default": "Aranet4 Platform"
+        "default": "Aranet4"
+      },
+      "autoDiscover": {
+        "title": "Auto Discover Devices",
+        "description": "Automatically add every Aranet4 found during startup discovery. Leave disabled to manage only the serial numbers listed below.",
+        "type": "boolean",
+        "required": false,
+        "default": false
+      },
+      "devices": {
+        "title": "Configured Aranet4 Devices",
+        "description": "Aranet4 sensors explicitly enrolled by Bluetooth serial number.",
+        "type": "array",
+        "required": false,
+        "items": {
+          "type": "object",
+          "properties": {
+            "serialNumber": {
+              "title": "Serial Number",
+              "type": "string",
+              "required": true
+            },
+            "name": {
+              "title": "Name",
+              "type": "string",
+              "required": true
+            },
+            "enabled": {
+              "title": "Enabled",
+              "type": "boolean",
+              "required": false,
+              "default": true
+            }
+          }
+        }
       },
       "co2AlertThreshold": {
         "title": "CO2 Alert Threshold",
-        "description": "When to consider that the CO2 level is too high (in ppm).",
+        "description": "When to consider that the CO2 level is too high, in ppm.",
         "type": "integer",
         "required": true,
-        "default": 1400,
+        "default": 1000,
         "minimum": 0,
-        "maximum": 2000
+        "maximum": 5000
       },
       "batteryAlertThreshold": {
         "title": "Battery Alert Threshold",
-        "description": "When to consider that the battery is low (in %).",
+        "description": "When to consider that the battery is low, in percent.",
         "type": "integer",
         "required": true,
         "default": 10,
@@ -31,30 +65,44 @@
       },
       "sensorDataRefreshInterval": {
         "title": "Sensor Data Refresh Interval",
-        "description": "How often we should get data from the sensor (in seconds).",
+        "description": "How often to read the sensor, in seconds.",
         "type": "integer",
         "required": true,
         "default": 300,
-        "minimum": 0,
+        "minimum": 30,
         "maximum": 3600
       },
       "bluetoothReadyTimeout": {
         "title": "Bluetooth Ready Timeout",
-        "description": "How long to wait for Bluetooth to be ready (in seconds)",
+        "description": "How long to wait for Bluetooth to be ready, in seconds.",
         "type": "integer",
         "required": true,
-        "default": 10,
-        "minimum": 0,
-        "maximum": 60
+        "default": 30,
+        "minimum": 1,
+        "maximum": 120
       },
       "bluetoothDeviceSearchTimeout": {
         "title": "Bluetooth Device Search Timeout",
-        "description": "How long to wait for Bluetooth device discovery (in seconds).",
+        "description": "How long to scan for Aranet4 devices, in seconds.",
         "type": "integer",
         "required": true,
-        "default": 10,
-        "minimum": 0,
-        "maximum": 60
+        "default": 30,
+        "minimum": 1,
+        "maximum": 120
+      },
+      "showCo2PpmTile": {
+        "title": "Show CO2 ppm Tile",
+        "description": "Adds a compatibility Light Sensor service named Aranet4 CO2 ppm so Homebridge UI shows the CO2 number on the Accessories page. Homebridge UI will label the rendered unit as lux; leave this off for native HomeKit CO2 only.",
+        "type": "boolean",
+        "required": false,
+        "default": false
+      },
+      "showAirQualitySensor": {
+        "title": "Show Air Quality Sensor",
+        "description": "Adds an Air Quality Sensor service derived from CO2 ppm.",
+        "type": "boolean",
+        "required": false,
+        "default": false
       }
     }
   }
